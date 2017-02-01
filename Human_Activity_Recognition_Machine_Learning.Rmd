@@ -1,0 +1,192 @@
+---
+title: "Human Activity Detection with Machine Learning"
+author: "Harish Kumar Rongala"
+date: "January 29, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Executive Summary
+
+In this document we try to predict which type of exercise is being done by the person, with data provided by accelerometers. We use machine learning algorithms **rpart**, **gradient boosting** and **random forests** to predict. This document also shows how each model is built, use of cross validation and out of sample errors. 
+
+## 2. About Data set
+
+Data set used in this document is an open source data and following paper can be refered to know more about the data.
+
+**Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises** [Read more here](http://groupware.les.inf.puc-rio.br/har#ixzz4XOx2aHwx)
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+## 3. Preparing data
+
+Data is prepared in 3 steps. First, data is loaded in to the working directory. Next, missing values ("NA"/"NaN") will be handled. Finally, to test the accuracy of our models we need a validation set. So, we divide the data set in to training and validation sets. 
+
+### 3.1. Loading data
+
+```{r cache=TRUE}
+## Training data url
+url1<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv";
+
+## Download and read file
+download.file(url1,"HAR_training.csv");
+HAR_train<-read.csv("HAR_training.csv",na.strings = c("","NA"));
+dim(HAR_train);
+```
+This data set contains `r nrow(HAR_train)` observations and `r ncol(HAR_train)` columns.
+
+### 3.2. Cleaning data
+
+There are multiple columns containing missing values. It may not be ideal to impute values here because, these columns are redundant and represent values like maximum, minimum, average, std deviation, variance, amplitude, skewness and kurtosis of the signal. First 7 columns represents values like user id, subject name, timestamp etc. They are unrelated in predicting the type of exercise. So, we drop them as well.
+
+```{r}
+## This variable holds columns to be dropped
+drp<-NULL;
+## 
+drp<-append(drp,c(1:7));
+drp<-append(drp,grep("^max|^min|^avg|^std|^var|^amp|^skew|^kurt",names(HAR_train)));
+## Dropping unwanted columns
+HAR_train_clean<-HAR_train[,-drp];
+dim(HAR_train_clean);
+```
+
+After dropping the unwanted columns, our data set contains `r ncol(HAR_train_clean)` columns.
+
+### 3.3. Data Slicing
+
+As we intend to create multiple models and test, it is always a good practice to slice our training data in to training and validation set (when data set is large enough). Here, the **70%** of training set is labeled as training set and **30%** is labeled as validation set. 
+
+```{r warning=FALSE}
+## Creating training and validation sets
+suppressPackageStartupMessages(library(caret));
+## Set seed for reproducibility
+set.seed(1225);
+ind<-createDataPartition(HAR_train_clean$classe,p=0.7,list=FALSE);
+train_set<-HAR_train_clean[ind,];
+valid_set<-HAR_train_clean[-ind,];
+
+dim(train_set);
+dim(valid_set);
+
+```
+
+
+## 4. Model fitting
+
+We start with a **rpart** tree classification and end with **gradient boosting method** and **random forests method**. Cross validation is performed with K-fold method, K being 10. This ensures accuracy of the model by training and testing on every observation of the training set and averaging the accuracies.
+
+```{r warning=FALSE, cache=TRUE}
+## Set seed for reproducibility
+set.seed(1225);
+tr_ctrl<-trainControl(method="cv", savePredictions = TRUE, classProbs = TRUE);
+## Using rpart classifier
+suppressPackageStartupMessages(fit0<-train(classe~.,data=train_set,method="rpart",trControl=tr_ctrl));
+
+## Look at the model
+suppressPackageStartupMessages(library(rattle));
+fancyRpartPlot(fit0$finalModel);
+```
+
+```{r cache=TRUE, results="hide", warning=FALSE}
+## Set seed for reproducibility
+set.seed(1225);
+## Fit Gradient Boosting method
+fit1<-train(classe~.,data=train_set,method="gbm",trControl=tr_ctrl);
+```
+
+```{r cache=TRUE, results="hide", warning=FALSE}
+## Set seed for reproducibility
+set.seed(1225);
+## Fit using Random Forests 
+fit2<-train(classe~.,data=train_set,method="rf",trControl=tr_ctrl);
+rf_ind<-fit2$pred$mtry==2;
+```
+
+
+## 5. Prediction
+
+### 5.1. Prediction on Validation set
+
+```{r warning=FALSE}
+## Predict using rpart classifier
+suppressPackageStartupMessages(rpart_pr<-predict(fit0,valid_set));
+## Predict using Gradient boosting model
+suppressPackageStartupMessages(gbm_pr<-predict(fit1,valid_set));
+## Predict using Random Forest model
+suppressPackageStartupMessages(rf_pr<-predict(fit2,valid_set));
+
+## Look at the accuracy
+confusionMatrix(rpart_pr,valid_set$classe);
+confusionMatrix(gbm_pr,valid_set$classe);
+confusionMatrix(rf_pr,valid_set$classe);
+
+```
+
+### 5.2. Look at the ROC
+
+From the above results, Random Forests seems to have higher accuracy. It's ROC of each class (each type of exercise) looks as following.
+
+```{r results="hide", echo=FALSE, warning=FALSE}
+rf_ind<-fit2$pred$mtry==2;
+suppressMessages(library(pROC));
+p1<-roc(fit2$pred$obs[rf_ind],fit2$pred$A[rf_ind]);
+p2<-roc(fit2$pred$obs[rf_ind],fit2$pred$B[rf_ind]);
+p3<-roc(fit2$pred$obs[rf_ind],fit2$pred$C[rf_ind]);
+p4<-roc(fit2$pred$obs[rf_ind],fit2$pred$D[rf_ind]);
+p5<-roc(fit2$pred$obs[rf_ind],fit2$pred$E[rf_ind]);
+
+```
+
+```{r message="hide"}
+par(mfrow=c(2,3));
+plot(p1);
+plot(p2);
+plot(p3);
+plot(p4);
+plot(p5);
+```
+
+### 5.3. Prediction on Test set
+
+```{r cache=TRUE}
+## Testing data url
+url2<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv";
+download.file(url2,"HAR_test.csv");
+HAR_test<-read.csv("HAR_test.csv");
+
+test_pr_rpart<-predict(fit0,HAR_test);
+test_pr_gbm<-predict(fit1,HAR_test);
+test_pr_rf<-predict(fit2,HAR_test);
+
+test_pr_rpart;
+test_pr_gbm;
+test_pr_rf;
+```
+
+## 6. Conclusion
+
++ Out of sample error of rpart classifier is `r 1-0.4962`
++ Out of sample error of Gradient Boosting Model is `r 1-0.9613`
++ Out of sample error of Random Forest model is `r 1-0.9935`
++ In this case, prediction on test set is same for GBM and Random Forests. However, considering the error rate, we submit the Random forests model as our final model.
+
+
+## 7. Appendix
+
+ROC code
+
+```{r eval=FALSE}
+library(pROC);
+rf_ind<-fit2$pred$mtry==2;
+suppressMessages(library(pROC));
+p1<-roc(fit2$pred$obs[rf_ind],fit2$pred$A[rf_ind]);
+p2<-roc(fit2$pred$obs[rf_ind],fit2$pred$B[rf_ind]);
+p3<-roc(fit2$pred$obs[rf_ind],fit2$pred$C[rf_ind]);
+p4<-roc(fit2$pred$obs[rf_ind],fit2$pred$D[rf_ind]);
+p5<-roc(fit2$pred$obs[rf_ind],fit2$pred$E[rf_ind]);
+
+```
+
